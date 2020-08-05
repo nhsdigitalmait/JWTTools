@@ -1,0 +1,50 @@
+{
+  "iss": "https://rhm-hagar.cfh-nic.nhs.uk/",
+  "sub": "__PRACTITIONER_ID__",
+  "aud": "https://authorize.fhir.nhs.uk/token",
+  "exp": __CURRENT_UTC_PLUS_5_MIN__,
+  "iat": __CURRENT_UTC__,
+  "reason_for_request": "directcare",
+  "requested_record": {
+    "resourceType": "Patient",
+    "identifier": [
+      {
+        "system": "https://fhir.nhs.uk/Id/nhs-number",
+        "value": "__NHS_NUMBER__"
+      }
+    ]
+  },
+  "requested_scopes": "patient/*.read",
+  "requesting_device": {
+    "resourceType": "Device",
+    "identifier": [
+      {
+        "system": "DeviceSystem",
+        "value": "DeviceID"
+      }
+    ],
+    "type": "SNOMEDCTCodeForTypeOfDevice",
+    "model": "Spine Tools",
+    "version": "V2.0"
+  },
+  "requesting_organization": {
+    "resourceType": "Organization",
+    "identifier": [
+      {
+        "system": "https://fhir.nhs.uk/Id/ods-organization-code",
+        "value": "RHM"
+      }
+    ],
+    "name": "SOUTHAMPTON UNIVERSITY HOSPITALS NHS TRUST"
+  },
+  "requesting_practitioner": {
+    "resourceType": "Practitioner",
+    "id": "__PRACTITIONER_ID__",
+    "identifier": [
+      {
+        "system": "https://fhir.nhs.uk/sds-role-profile-id",
+        "value": "100077650987"
+      }
+    ]
+  }
+}
