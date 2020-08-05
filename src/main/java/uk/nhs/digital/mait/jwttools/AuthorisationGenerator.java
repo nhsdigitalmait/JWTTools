@@ -37,6 +37,7 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.Date;
+import java.util.Properties;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -64,7 +65,6 @@ public class AuthorisationGenerator {
 
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String USAGE = "usage: java -jar JWTTools.jar <path to message template file> <practitionerid> <nhs number> <hmac key> [<urlencode> [<addsignature> [<payloadCount>]]]";
-    private static final String VERSION_STRING = "JWTTools Subversion $Rev: 10 $";
     // Was modified for NRLS testing which seems to demand base 64 encoding with padding
     // padding now back to the more correct false for now as per spec
     // nb pure b64 is always padding on anyway
@@ -80,7 +80,14 @@ public class AuthorisationGenerator {
     public static void main(String[] args) throws Exception {
         switch (args.length) {
             case 0:
-                System.out.println(VERSION_STRING);
+                ClassLoader classLoader = AuthorisationGenerator.class.getClassLoader();
+                Properties properties = new Properties();
+                properties.load(classLoader.getResourceAsStream("git.properties"));
+                String versionString = String.format("JWTTools-%s %s %s",
+                        properties.getProperty("git.build.version"),
+                        properties.getProperty("git.commit.id.abbrev"),
+                        properties.getProperty("git.commit.time"));
+                System.out.println(versionString);
                 System.out.println(USAGE);
                 break;
             case 4:
@@ -289,7 +296,7 @@ public class AuthorisationGenerator {
     private String readFileFromJar(String filename)
             throws Exception {
         StringBuilder sb;
-        try (InputStream is = getClass().getResourceAsStream(filename)) {
+        try ( InputStream is = getClass().getResourceAsStream(filename)) {
             BufferedReader br = new BufferedReader(new InputStreamReader(is));
             sb = new StringBuilder();
             String line = null;
@@ -329,8 +336,8 @@ public class AuthorisationGenerator {
 
     /**
      * allows static linked invocation for invocation from main for use with eg
-     * curl shell scripts
-     * defaults addSIgnature to true and payloadCount to 1
+     * curl shell scripts defaults addSIgnature to true and payloadCount to 1
+     *
      * @param templateFile
      * @param practitionerID
      * @param nhsNo
@@ -353,8 +360,8 @@ public class AuthorisationGenerator {
 
     /**
      * allows static linked invocation for invocation from main for use with eg
-     * curl shell scripts
-     * adds addSignature and defaults payloadCount to 1
+     * curl shell scripts adds addSignature and defaults payloadCount to 1
+     *
      * @param templateFile
      * @param practitionerID
      * @param nhsNo
@@ -375,8 +382,7 @@ public class AuthorisationGenerator {
         }
         return authorisationGenerator.getAuthorisationString(practitionerID, nhsNo, secret, useBase64Url, addSignature, 1);
     }
-    
-    
+
     /**
      * allows static linked invocation for invocation from main for use with eg
      * curl shell scripts
