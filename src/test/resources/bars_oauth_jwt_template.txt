@@ -1,0 +1,8 @@
+{
+  "iss": "__API_KEY__",
+  "sub": "__API_KEY__",
+  "kid": "__PRACTITIONER_ID__",
+  "aud": "__NHS_NUMBER__",
+  "jti": "__GUID__",
+  "exp": __CURRENT_UTC_PLUS_5_MIN__
+}
