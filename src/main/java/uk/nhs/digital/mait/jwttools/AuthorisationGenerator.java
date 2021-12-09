@@ -26,6 +26,9 @@
 package uk.nhs.digital.mait.jwttools;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -34,10 +37,24 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.InvalidKeyException;
+import java.security.KeyStore;
+import java.security.KeyStore.PasswordProtection;
+import java.security.KeyStore.ProtectionParameter;
+import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
+import java.security.Signature;
+import java.security.SignatureException;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
 import java.util.Base64;
 import java.util.Date;
+import java.util.Enumeration;
 import java.util.Properties;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -52,6 +69,7 @@ public class AuthorisationGenerator {
     private String payloadTemplate = null;
     private String payloadTemplateNoSmartcard = null;
     private boolean useBase64URL = false;
+    private String header_RS512;
 
     public final static String HEADER_NONE = "{\n"
             + "  \"alg\": \"none\",\n"
@@ -63,7 +81,14 @@ public class AuthorisationGenerator {
             + "  \"typ\": \"JWT\"\n"
             + "}";
 
+    private final static String HEADER_RS512 = "{\n"
+            + "  \"alg\": \"RS512\",\n"
+            + "  \"typ\": \"JWT\",\n"
+            + "  \"kid\": \"__PRACTITIONER_ID__\"\n"
+            + "}";
+
     private static final String HMAC_ALGORITHM = "HmacSHA256";
+    private static final String RSA512_ALGORITHM = "SHA512WithRSA";
     private static final String USAGE = "usage: java -jar JWTTools.jar <path to message template file> <practitionerid> <nhs number> <hmac key> [<urlencode> [<addsignature> [<payloadCount>]]]";
     // Was modified for NRLS testing which seems to demand base 64 encoding with padding
     // padding now back to the more correct false for now as per spec
@@ -137,12 +162,27 @@ public class AuthorisationGenerator {
      * @return substituted payload
      */
     private String commonSubstitutions(String payload, String practitionerID, String nhsNumber) {
+        String[] commaTokens = nhsNumber.split(",");
+        for ( int i=1; i < commaTokens.length; i++) {
+            String entry = commaTokens[i];
+            String[] pipeTokens = entry.split("\\|");
+            if ( pipeTokens.length != 2) {
+                throw new IllegalArgumentException("Pipe tokens length != , count = "+pipeTokens.length);
+             }
+            String tag = pipeTokens[0];
+            String value = pipeTokens[1];
+            payload = payload.replaceAll(tag, value);
+        }
+        
+        header_RS512 = HEADER_RS512.replaceAll("__PRACTITIONER_ID__", practitionerID);
+
         payload = payload.replaceAll("__PRACTITIONER_ID__", practitionerID);
-        payload = payload.replaceAll("__NHS_NUMBER__", nhsNumber);
+        payload = payload.replaceAll("__NHS_NUMBER__", commaTokens[0]);
         // This is the unix epoch
         long now = new Date().getTime() / 1000;
         payload = payload.replaceAll("__CURRENT_UTC__", "" + now);
-        return payload.replaceAll("__CURRENT_UTC_PLUS_5_MIN__", "" + (now + (5 * 60)));
+        payload = payload.replaceAll("__CURRENT_UTC_PLUS_5_MIN__", "" + (now + (5 * 60)));
+        return payload.replaceAll("__GUID__", java.util.UUID.randomUUID().toString());
     }
 
     /**
@@ -172,7 +212,12 @@ public class AuthorisationGenerator {
         StringBuilder sbHeaderPlusPayload = new StringBuilder();
         if (addHeader) {
             if (addSignature) {
-                sbHeaderPlusPayload.append(toBase64(HEADER_HS256));
+                // if theres a kid element this is a bars oath jwt
+                if (!payloadTemplate.contains("\"kid\":")) {
+                    sbHeaderPlusPayload.append(toBase64(HEADER_HS256));
+                } else {
+                    sbHeaderPlusPayload.append(toBase64(header_RS512));
+                }
             } else {
                 sbHeaderPlusPayload.append(toBase64(HEADER_NONE));
             }
@@ -184,7 +229,11 @@ public class AuthorisationGenerator {
         }
 
         if (addHeader && addSignature) {
-            sbHeaderPlusPayload.append(getHmac(secret, sbHeaderPlusPayload.toString()));
+            if (!payloadTemplate.contains("\"kid\":")) {
+                sbHeaderPlusPayload.append(getHmac(secret, sbHeaderPlusPayload.toString()));
+            } else {
+                sbHeaderPlusPayload.append(getRS512SIgnature(secret, sbHeaderPlusPayload.toString()));
+            }
         }
 
         // append some more payloads at the end if required
@@ -200,7 +249,7 @@ public class AuthorisationGenerator {
      *
      * @param practitionerID this is a fhir resource id guid
      * @param nhsNumber 10 digit new style nhs number
-     * @param secret hmac secret string
+     * @param secret hmac secret string or path to jks containing private RSA key
      * @param useBase64URL use base 64 url encoding rather than pure base64
      * @param addSignature whether to add the third part of the JWT
      * @return the full string to be used in the http header
@@ -244,6 +293,7 @@ public class AuthorisationGenerator {
      * @deprecated Use more general form getAuthorisationString where template
      * is supplied in constructor
      */
+    @Deprecated
     public String getAuthorisationStringNoSmartcard(String practitionerID, String nhsNumber, String secret, boolean useBase64URL) throws NoSuchAlgorithmException, UnsupportedEncodingException, InvalidKeyException {
         this.useBase64URL = useBase64URL;
         // do the substitutions
@@ -265,6 +315,7 @@ public class AuthorisationGenerator {
      * @deprecated Use more general form getAuthorisationString where template
      * is supplied in constructor
      */
+    @Deprecated
     public String getAuthorisationStringNoSmartcard(String practitionerID, String nhsNumber, String secret) throws NoSuchAlgorithmException, UnsupportedEncodingException, InvalidKeyException {
         return getAuthorisationStringNoSmartcard(practitionerID, nhsNumber, secret, true);
     }
@@ -284,6 +335,111 @@ public class AuthorisationGenerator {
         SecretKeySpec secret_key = new SecretKeySpec(key.getBytes("UTF-8"), HMAC_ALGORITHM);
         hmac.init(secret_key);
         return toBase64(hmac.doFinal(data.getBytes("UTF-8")));
+    }
+
+    /**
+     * 
+     * @param key path tp jks[|password]
+     * @param data
+     * @param sigBytes
+     * @return 
+     */
+    public boolean verifyRS512Signature(String key, String data, byte[] sigBytes) {
+        String[] tokens = key.split("\\|");
+        String path = null;
+        String password = "password";
+        switch ( tokens.length) {
+            case 2:
+                password = tokens[1];
+            case 1:
+                path = tokens[0];
+                break;
+            default:
+                throw new IllegalArgumentException("RS512 key string is not in correct format, token count = "+tokens.length);
+        }
+        InputStream is = null;
+        try {
+            RSAPublicKey publicKey = null;
+            File file = new File(path);
+            is = new FileInputStream(file);
+            try {
+                KeyStore keystore = KeyStore.getInstance(KeyStore.getDefaultType());
+                keystore.load(is, password.toCharArray());
+                Enumeration<String> aliases = keystore.aliases();
+                while (aliases.hasMoreElements()) {
+                    String alias = aliases.nextElement();
+
+                    ProtectionParameter pp = new PasswordProtection(password.toCharArray());
+                    Certificate cert = keystore.getCertificate(alias);
+                    publicKey = (RSAPublicKey) cert.getPublicKey();
+                }
+            } catch (IOException | NoSuchAlgorithmException | KeyStoreException | CertificateException ex) {
+                Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+            }
+            Signature signature = Signature.getInstance(RSA512_ALGORITHM);
+            signature.initVerify(publicKey);
+            signature.update(data.getBytes());
+            return signature.verify(sigBytes);
+        } catch (FileNotFoundException | NoSuchAlgorithmException | InvalidKeyException | SignatureException ex) {
+            Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                is.close();
+            } catch (IOException ex) {
+                Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 
+     * @param key path tp jks[|password]
+     * @param data data to be signed
+     * @return 
+     */
+    private String getRS512SIgnature(String key, String data) {
+        String[] tokens = key.split("\\|");
+        String path = null;
+        String password = "password";
+        switch ( tokens.length) {
+            case 2:
+                password = tokens[1];
+            case 1:
+                path = tokens[0];
+                break;
+            default:
+                throw new IllegalArgumentException("RS512 key string is not in correct format, token count = "+tokens.length);
+        }
+        
+        try {
+            RSAPrivateKey privateKey = null;
+
+            File file = new File(path);
+            InputStream is = new FileInputStream(file);
+            try {
+                KeyStore keystore = KeyStore.getInstance(KeyStore.getDefaultType());
+                keystore.load(is, password.toCharArray());
+                Enumeration<String> aliases = keystore.aliases();
+                while (aliases.hasMoreElements()) {
+                    String alias = aliases.nextElement();
+                    privateKey = (RSAPrivateKey) keystore.getKey(alias, password.toCharArray());
+                }
+            } catch (KeyStoreException | CertificateException | UnrecoverableKeyException ex) {
+                Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+            }
+
+            Signature signature = Signature.getInstance(RSA512_ALGORITHM);
+            signature.initSign(privateKey);
+            signature.update(data.getBytes());
+            byte[] sigBytes = signature.sign();
+            return toBase64(sigBytes);
+        } catch (NoSuchAlgorithmException | InvalidKeyException | SignatureException | UnsupportedEncodingException ex) {
+            Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (IOException ex) {
+            Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        return null;
     }
 
     /**
