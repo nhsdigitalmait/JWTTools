@@ -37,6 +37,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.InvalidKeyException;
+import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.KeyStore.PasswordProtection;
 import java.security.KeyStore.ProtectionParameter;
@@ -49,6 +50,8 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.Date;
 import java.util.Enumeration;
@@ -202,7 +205,7 @@ public class AuthorisationGenerator {
      * @throws InvalidKeyException
      */
     public String getAuthorisationString(String practitionerID, String nhsNumber, String secret, boolean useBase64URL, boolean addSignature, int payloadCount)
-            throws NoSuchAlgorithmException, UnsupportedEncodingException, InvalidKeyException {
+            throws NoSuchAlgorithmException, UnsupportedEncodingException, InvalidKeyException, Exception {
         boolean addHeader = true; // this should always be true but just in case we need the flexibility..
 
         this.useBase64URL = useBase64URL;
@@ -232,7 +235,7 @@ public class AuthorisationGenerator {
             if (!payloadTemplate.contains("\"kid\":")) {
                 sbHeaderPlusPayload.append(getHmac(secret, sbHeaderPlusPayload.toString()));
             } else {
-                sbHeaderPlusPayload.append(getRS512SIgnature(secret, sbHeaderPlusPayload.toString()));
+                sbHeaderPlusPayload.append(getRS512Signature(secret, sbHeaderPlusPayload.toString()));
             }
         }
 
@@ -339,42 +342,68 @@ public class AuthorisationGenerator {
 
     /**
      * 
-     * @param key path tp jks[|password]
+     * @param key (path tp jks|public key pem)[|password]
      * @param data
      * @param sigBytes
-     * @return 
+     * @return boolean indicating whether data is signed correctly
      */
-    public boolean verifyRS512Signature(String key, String data, byte[] sigBytes) {
+    public boolean verifyRS512Signature(String key, String data, byte[] sigBytes) throws Exception {
         String[] tokens = key.split("\\|");
         String path = null;
         String password = "password";
+        File file = null;
         switch ( tokens.length) {
             case 2:
                 password = tokens[1];
             case 1:
                 path = tokens[0];
+                file = new File(path);
+                if (!file.exists()){
+                    throw new IOException("Public key file "+path+ " does not exist");
+                }
                 break;
             default:
                 throw new IllegalArgumentException("RS512 key string is not in correct format, token count = "+tokens.length);
         }
-        InputStream is = null;
         try {
             RSAPublicKey publicKey = null;
-            File file = new File(path);
-            is = new FileInputStream(file);
-            try {
-                KeyStore keystore = KeyStore.getInstance(KeyStore.getDefaultType());
-                keystore.load(is, password.toCharArray());
-                Enumeration<String> aliases = keystore.aliases();
-                while (aliases.hasMoreElements()) {
-                    String alias = aliases.nextElement();
+            if ( path.toLowerCase().endsWith(".jks") ) {
+                InputStream is = new FileInputStream(file);
+                try {
+                    KeyStore keystore = KeyStore.getInstance(KeyStore.getDefaultType());
+                    keystore.load(is, password.toCharArray());
+                    Enumeration<String> aliases = keystore.aliases();
+                    while (aliases.hasMoreElements()) {
+                        String alias = aliases.nextElement();
 
-                    ProtectionParameter pp = new PasswordProtection(password.toCharArray());
-                    Certificate cert = keystore.getCertificate(alias);
-                    publicKey = (RSAPublicKey) cert.getPublicKey();
+                        ProtectionParameter pp = new PasswordProtection(password.toCharArray());
+                        Certificate cert = keystore.getCertificate(alias);
+                        publicKey = (RSAPublicKey) cert.getPublicKey();
+                        break;
+                    }
+                } catch (IOException | NoSuchAlgorithmException | KeyStoreException | CertificateException ex) {
+                    Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+                } finally {
+                    try {
+                        is.close();
+                    } catch (IOException ex) {
+                        Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+                    }
                 }
-            } catch (IOException | NoSuchAlgorithmException | KeyStoreException | CertificateException ex) {
-                Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+            } else  {
+                String publicKeyPEM = readFile2String(path);
+                if (!publicKeyPEM.contains(BEGIN_PUBLIC_KEY) || !publicKeyPEM.contains(END_PUBLIC_KEY)) {
+                    throw new IllegalArgumentException("Public key file is not in expected format");
+                }
+                publicKeyPEM = publicKeyPEM
+                    .replace(BEGIN_PUBLIC_KEY, "")
+                    .replaceAll(System.lineSeparator(), "")
+                    .replace(END_PUBLIC_KEY, "");
+
+                byte[] encoded = Base64.getDecoder().decode(publicKeyPEM);
+                KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+                X509EncodedKeySpec keySpec = new X509EncodedKeySpec(encoded);
+                publicKey = (RSAPublicKey) keyFactory.generatePublic(keySpec);
             }
             Signature signature = Signature.getInstance(RSA512_ALGORITHM);
             signature.initVerify(publicKey);
@@ -382,31 +411,32 @@ public class AuthorisationGenerator {
             return signature.verify(sigBytes);
         } catch (FileNotFoundException | NoSuchAlgorithmException | InvalidKeyException | SignatureException ex) {
             Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
-        } finally {
-            try {
-                is.close();
-            } catch (IOException ex) {
-                Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
-            }
-        }
+        } 
         return false;
     }
+    private static final String END_PUBLIC_KEY = "-----END PUBLIC KEY-----";
+    private static final String BEGIN_PUBLIC_KEY = "-----BEGIN PUBLIC KEY-----";
 
     /**
      * 
-     * @param key path tp jks[|password]
+     * @param key path to (jks|pem private key file)[|password]
      * @param data data to be signed
-     * @return 
+     * @return base64 encoded string containin signature
      */
-    private String getRS512SIgnature(String key, String data) {
+    public String getRS512Signature(String key, String data) throws Exception {
         String[] tokens = key.split("\\|");
         String path = null;
         String password = "password";
+        File file = null;
         switch ( tokens.length) {
             case 2:
                 password = tokens[1];
             case 1:
                 path = tokens[0];
+                file = new File(path);
+                if (!file.exists()){
+                    throw new IOException("Private key file "+path+ " does not exist");
+                }
                 break;
             default:
                 throw new IllegalArgumentException("RS512 key string is not in correct format, token count = "+tokens.length);
@@ -414,20 +444,41 @@ public class AuthorisationGenerator {
         
         try {
             RSAPrivateKey privateKey = null;
-
-            File file = new File(path);
-            InputStream is = new FileInputStream(file);
-            try {
-                KeyStore keystore = KeyStore.getInstance(KeyStore.getDefaultType());
-                keystore.load(is, password.toCharArray());
-                Enumeration<String> aliases = keystore.aliases();
-                while (aliases.hasMoreElements()) {
-                    String alias = aliases.nextElement();
-                    privateKey = (RSAPrivateKey) keystore.getKey(alias, password.toCharArray());
+            if ( path.toLowerCase().endsWith(".jks") ) {
+                InputStream is = new FileInputStream(file);
+                try {
+                    KeyStore keystore = KeyStore.getInstance(KeyStore.getDefaultType());
+                    keystore.load(is, password.toCharArray());
+                    Enumeration<String> aliases = keystore.aliases();
+                    while (aliases.hasMoreElements()) {
+                        String alias = aliases.nextElement();
+                        privateKey = (RSAPrivateKey) keystore.getKey(alias, password.toCharArray());
+                        break;
+                    }
+                } catch (KeyStoreException | CertificateException | UnrecoverableKeyException ex) {
+                    Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+                } finally {
+                    try {
+                        is.close();
+                    } catch (IOException ex) {
+                        Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
+                    }
                 }
-            } catch (KeyStoreException | CertificateException | UnrecoverableKeyException ex) {
-                Logger.getLogger(AuthorisationGenerator.class.getName()).log(Level.SEVERE, null, ex);
-            }
+            } else  {
+                String privateKeyPEM = readFile2String(path);
+                if (!privateKeyPEM.contains(BEGIN_PRIVATE_KEY) || !privateKeyPEM.contains(END_PRIVATE_KEY)) {
+                    throw new IllegalArgumentException("Private key file is not in expected format");
+                }
+                privateKeyPEM = privateKeyPEM
+                    .replace(BEGIN_PRIVATE_KEY, "")
+                    .replaceAll(System.lineSeparator(), "")
+                    .replace(END_PRIVATE_KEY, "");
+
+                byte[] encoded = Base64.getDecoder().decode(privateKeyPEM);
+                KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+                PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(encoded);
+                privateKey = (RSAPrivateKey) keyFactory.generatePrivate(keySpec);
+            } 
 
             Signature signature = Signature.getInstance(RSA512_ALGORITHM);
             signature.initSign(privateKey);
@@ -441,6 +492,8 @@ public class AuthorisationGenerator {
         }
         return null;
     }
+    private static final String END_PRIVATE_KEY = "-----END PRIVATE KEY-----";
+    private static final String BEGIN_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----";
 
     /**
      * take a file name as a local resource within the jar
@@ -466,8 +519,7 @@ public class AuthorisationGenerator {
 
     private String readFile2String(String filename) throws IOException {
         Path path = Paths.get(filename);
-        byte[] bytes = Files.readAllBytes(path);
-        return new String(bytes);
+        return Files.readString(path);
     }
 
     /**

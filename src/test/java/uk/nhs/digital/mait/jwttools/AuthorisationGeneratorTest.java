@@ -16,6 +16,7 @@
 package uk.nhs.digital.mait.jwttools;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Base64;
 import org.junit.After;
@@ -417,5 +418,47 @@ public class AuthorisationGeneratorTest {
         parts = result.split("\\.");
         assertTrue(parts.length == 4);
         assertEquals(parts[1], parts[3]);
+    }
+
+    @Test
+    public void testRS512Sign() throws Exception {
+        System.out.println("RS512Sign");
+        String signature = instance.getRS512Signature("src/test/resources/test.pem", "abc123");
+        assertTrue(signature.length()>0);
+    }
+
+    @Test  (expected = IOException.class)
+    public void testRS512SignNoFile() throws Exception {
+        System.out.println("RS512SignNoFile");
+        String signature = instance.getRS512Signature("src/test/resources/test.pemxxx", "abc123");
+        assertTrue(signature.length()>0);
+    }
+    
+    /**
+     * Test of verifyRS512Signature method, of class AuthorisationGenerator.
+     */
+    @Test
+    public void testVerifyRS512Signature() throws Exception {
+        System.out.println("verifyRS512Signature");
+        String key = "src/test/resources/test.pubkey";
+        String data = "abc123";
+        byte[] sigBytes = Base64.getDecoder().decode(instance.getRS512Signature("src/test/resources/test.pem", data));
+        boolean expResult = true;
+        boolean result = instance.verifyRS512Signature(key, data, sigBytes);
+        assertEquals(expResult, result);
+    }
+
+    /**
+     * Test of verifyRS512SignatureNoFile method, of class AuthorisationGenerator.
+     */
+    @Test (expected = IOException.class)
+    public void testVerifyRS512SignatureNoFile() throws Exception {
+        System.out.println("verifyRS512SignatureNo0File");
+        String key = "src/test/resources/test.pubkeyxxx";
+        String data = "abc123";
+        byte[] sigBytes = Base64.getDecoder().decode(instance.getRS512Signature("src/test/resources/test.pem", data));
+        boolean expResult = true;
+        boolean result = instance.verifyRS512Signature(key, data, sigBytes);
+        assertEquals(expResult, result);
     }
 }

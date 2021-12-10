@@ -81,7 +81,7 @@ public class OauthUtils {
     }
 
     /**
-     * parse an endpoint config fiel containing environment variable settings
+     * parse an endpoint config file containing environment variable settings
      * @param endPointConfigFile
      * @return HashMap of config file attributes
      * @throws IOException
@@ -99,7 +99,7 @@ public class OauthUtils {
             if (!line.matches("^\\s*#")) {
                 String[] elements = line.split("=");
                 if (elements.length == 2) {
-                    endpointConfig.put(elements[0], elements[1]);
+                    endpointConfig.put(elements[0].trim(), elements[1].trim());
                 }
             }
         }
