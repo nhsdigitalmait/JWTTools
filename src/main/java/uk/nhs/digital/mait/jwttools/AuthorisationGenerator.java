@@ -68,6 +68,12 @@ import javax.crypto.spec.SecretKeySpec;
  * @author simonfarrow
  */
 public class AuthorisationGenerator {
+    
+    public enum JWT_Algorithm {
+        NONE,  // default for false
+        HS256, // default for true
+        RS512
+    };
 
     private String payloadTemplate = null;
     private String payloadTemplateNoSmartcard = null;
@@ -197,7 +203,7 @@ public class AuthorisationGenerator {
      * @param nhsNumber 10 digit new style nhs number
      * @param secret hmac secret string
      * @param useBase64URL use base 64 url encoding rather than pure base64
-     * @param addSignature whether to add the third part of the JWT
+     * @param addSignature whether (true|false) to add the third part of the JWT if true default to hmac
      * @param payloadCount
      * @return the full string to be used in the http header
      * @throws NoSuchAlgorithmException
@@ -205,6 +211,27 @@ public class AuthorisationGenerator {
      * @throws InvalidKeyException
      */
     public String getAuthorisationString(String practitionerID, String nhsNumber, String secret, boolean useBase64URL, boolean addSignature, int payloadCount)
+            throws NoSuchAlgorithmException, UnsupportedEncodingException, InvalidKeyException, Exception {
+        return getAuthorisationString(practitionerID, nhsNumber, secret, useBase64URL, addSignature ? JWT_Algorithm.HS256 : JWT_Algorithm.NONE , payloadCount);
+    }
+  
+    /**
+     * return the fully populated two/three/four part authorisation string main
+     * method call with full set of parameters extra parameters for test
+     * mangling purposes
+     *
+     * @param practitionerID this is a fhir resource id guid
+     * @param nhsNumber 10 digit new style nhs number
+     * @param secret hmac secret string
+     * @param useBase64URL use base 64 url encoding rather than pure base64
+     * @param algorithm specific aLgorithm 
+     * @param payloadCount
+     * @return the full string to be used in the http header
+     * @throws NoSuchAlgorithmException
+     * @throws UnsupportedEncodingException
+     * @throws InvalidKeyException
+     */
+    public String getAuthorisationString(String practitionerID, String nhsNumber, String secret, boolean useBase64URL, JWT_Algorithm algorithm, int payloadCount)
             throws NoSuchAlgorithmException, UnsupportedEncodingException, InvalidKeyException, Exception {
         boolean addHeader = true; // this should always be true but just in case we need the flexibility..
 
@@ -214,12 +241,19 @@ public class AuthorisationGenerator {
 
         StringBuilder sbHeaderPlusPayload = new StringBuilder();
         if (addHeader) {
-            if (addSignature) {
-                // if theres a kid element this is a bars oath jwt
-                if (!payloadTemplate.contains("\"kid\":")) {
-                    sbHeaderPlusPayload.append(toBase64(HEADER_HS256));
-                } else {
-                    sbHeaderPlusPayload.append(toBase64(header_RS512));
+            if (algorithm != null) {
+                switch (algorithm){
+                    case NONE:
+                        sbHeaderPlusPayload.append(toBase64(HEADER_NONE));
+                        break;
+                    case HS256:
+                        sbHeaderPlusPayload.append(toBase64(HEADER_HS256));
+                        break;
+                    case RS512:
+                        sbHeaderPlusPayload.append(toBase64(header_RS512));
+                        break;
+                    default:
+                        throw new IllegalArgumentException("Invalid algorithm");
                 }
             } else {
                 sbHeaderPlusPayload.append(toBase64(HEADER_NONE));
@@ -231,12 +265,17 @@ public class AuthorisationGenerator {
             sbHeaderPlusPayload.append(toBase64(payload)).append(".");
         }
 
-        if (addHeader && addSignature) {
-            if (!payloadTemplate.contains("\"kid\":")) {
+        switch (algorithm){
+            case NONE:
+                break;
+            case HS256:
                 sbHeaderPlusPayload.append(getHmac(secret, sbHeaderPlusPayload.toString()));
-            } else {
+                break;
+            case RS512:
                 sbHeaderPlusPayload.append(getRS512Signature(secret, sbHeaderPlusPayload.toString()));
-            }
+                break;
+            default:
+                throw new IllegalArgumentException("Invalid algorithm");
         }
 
         // append some more payloads at the end if required
@@ -545,11 +584,12 @@ public class AuthorisationGenerator {
     /**
      * allows static linked invocation for invocation from main for use with eg
      * curl shell scripts defaults addSIgnature to true and payloadCount to 1
-     *
+     * 5 Parameters
+     * 
      * @param templateFile
      * @param practitionerID
      * @param nhsNo
-     * @param secret
+     * @param secret hmac secret or path and password to RSA private key
      * @param useBase64URLStr "true" or "false"
      * @return base 64 encoded JWT string
      * @throws Exception
@@ -569,11 +609,12 @@ public class AuthorisationGenerator {
     /**
      * allows static linked invocation for invocation from main for use with eg
      * curl shell scripts adds addSignature and defaults payloadCount to 1
+     * 6 Parameters
      *
      * @param templateFile
      * @param practitionerID
      * @param nhsNo
-     * @param secret
+     * @param secret hmac secret or path and password to RSA private key
      * @param useBase64URLStr "true" or "false"
      * @param addSignatureStr "true" or "false"
      * @return base 64 encoded JWT string
@@ -593,28 +634,45 @@ public class AuthorisationGenerator {
 
     /**
      * allows static linked invocation for invocation from main for use with eg
-     * curl shell scripts
+     * curl shell scripts 7 Parameters
      *
      * @param templateFile
      * @param practitionerID
      * @param nhsNo
-     * @param secret
-     * @param useBase64URLStr "true" or "false"
-     * @param addSignatureStr "true" or "false"
+     * @param secret hmac secret or path and password to RSA private key
+     * @param useBase64URLStr "true" or "false" 
+     * @param addSignatureStr "true" or "false" or NONE|HS256|RS512
      * @param payloadCountStr integer
      * @return base 64 encoded JWT string
      * @throws Exception
      */
     public static String getJWT(String templateFile, String practitionerID, String nhsNo, String secret, String useBase64URLStr, String addSignatureStr, String payloadCountStr) throws Exception {
-        AuthorisationGenerator authorisationGenerator = new AuthorisationGenerator(templateFile);
-        Boolean useBase64Url = Boolean.valueOf(useBase64URLStr);
-        Boolean addSignature = Boolean.valueOf(addSignatureStr);
+        AuthorisationGenerator authorisationGenerator = new AuthorisationGenerator(templateFile);        
+        Boolean useBase64Url = Boolean.valueOf(useBase64URLStr);        
+        JWT_Algorithm algorithm = null;
+        switch (addSignatureStr.toLowerCase())
+        {
+            case "false":
+                algorithm = JWT_Algorithm.NONE;
+                break;
+            case "true":
+                algorithm = JWT_Algorithm.HS256;
+                break;
+            default:
+                try {
+                    algorithm = JWT_Algorithm.valueOf(addSignatureStr.toUpperCase()); }
+                catch (IllegalArgumentException ex) {
+                    throw new IllegalArgumentException("Unrecognised algorithm string "+ addSignatureStr);
+                }
+                break;
+        }        
+        
         int payloadCount = Integer.parseInt(payloadCountStr);
         if (!useBase64Url) {
             System.err.println("WARNING: JWTTools is not using base64 url encoding");
         } else if (USE_PADDING) {
             System.err.println("WARNING: JWTTools is using base64 url encoding WITH padding");
         }
-        return authorisationGenerator.getAuthorisationString(practitionerID, nhsNo, secret, useBase64Url, addSignature, payloadCount);
+        return authorisationGenerator.getAuthorisationString(practitionerID, nhsNo, secret, useBase64Url, algorithm, payloadCount);
     }
 }

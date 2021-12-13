@@ -127,7 +127,7 @@ public class AuthorisationGeneratorTest {
 
     /**
      * Test of getAuthorisationStringNoSmartcard method, of class
-     * AuthorisationGenerator.
+ AuthorisationGenerator.
      *
      * @throws java.lang.Exception
      */
@@ -224,7 +224,7 @@ public class AuthorisationGeneratorTest {
 
     /**
      * Test of getAuthorisationStringNoSmartcard method, of class
-     * AuthorisationGenerator.
+ AuthorisationGenerator.
      *
      * @throws java.lang.Exception
      */
@@ -245,7 +245,7 @@ public class AuthorisationGeneratorTest {
 
     /**
      * Test of getAuthorisationStringNoSmartcard method, of class
-     * AuthorisationGenerator.
+ AuthorisationGenerator.
      *
      * @throws java.lang.Exception
      */
