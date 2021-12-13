@@ -4,3 +4,9 @@
 target/
 nbproject/
 mygitpush.sh
+/src/test/resources/NHS0001.sh
+/src/test/resources/NHS0001_token.json
+nohup.out
+nb*.xml
+src/test/resources/test.pem
+src/test/resources/test.pubkey
