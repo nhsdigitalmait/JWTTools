@@ -176,7 +176,7 @@ public class AuthorisationGenerator {
             String entry = commaTokens[i];
             String[] pipeTokens = entry.split("\\|");
             if ( pipeTokens.length != 2) {
-                throw new IllegalArgumentException("Pipe tokens length != , count = "+pipeTokens.length);
+                throw new IllegalArgumentException("Pipe tokens length != 2, count = "+pipeTokens.length);
              }
             String tag = pipeTokens[0];
             String value = pipeTokens[1];

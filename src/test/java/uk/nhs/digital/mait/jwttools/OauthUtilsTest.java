@@ -65,10 +65,10 @@ public class OauthUtilsTest {
      * Test of oathGetAccessToken method, of class OauthUtils.
      */
     @Test
-    public void testOathGetAccessToken() throws Exception {
-        System.out.println("oathGetAccessToken");
+    public void testOauthGetAccessToken_AuthorizationCode() throws Exception {
+        System.out.println("oauthGetAccessToken_AuthorizationCode");
         String endPointConfigFile = "src/test/resources/NHS0001.sh";
-        String result = OauthUtils.oauthGetAccessToken(endPointConfigFile);
+        String result = OauthUtils.oauthGetAccessToken_AuthorizationCode(endPointConfigFile);
         assertTrue(result.trim().length() > 0);
 
         assertTrue(tokenFile.exists());
@@ -77,11 +77,23 @@ public class OauthUtilsTest {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("https://sandbox.api.service.nhs.uk/hello-world/hello/user"))
-                .setHeader("Authorization", "Bearer " + result)
+                .setHeader("Authorization", result)
                 .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200,response.statusCode());
         System.out.println(response.body());
+        assertEquals(200,response.statusCode());
+    }
+
+    /**
+     * Test of oauthGetAccessToken_ClientCredentials method, of class OauthUtils.
+     */
+    @Test
+    public void testOauthGetAccessToken_ClientCredentials() throws Exception {
+        System.out.println("oauthGetAccessToken_ClientCredentials");
+        String endPointConfigFile = "src/test/resources/NHS0001.sh";
+        String expResult = "";
+        String result = OauthUtils.oauthGetAccessToken_ClientCredentials(endPointConfigFile);
+        assertEquals(expResult, result);
     }
 
 }

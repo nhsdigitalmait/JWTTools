@@ -35,6 +35,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.internal.LinkedTreeMap;
 import java.net.URLEncoder;
+import uk.nhs.digital.mait.jwttools.AuthorisationGenerator.JWT_Algorithm;
 
 /**
  *
@@ -43,6 +44,28 @@ import java.net.URLEncoder;
 public class OauthUtils {
 
     private final static boolean DEBUG = false;
+    private static HttpClient client;
+    private static Gson gson;
+
+    // environment variable names in endpoint config file
+    private static final String OAUTH_SERVER_ENDPOINT_CONFIG = "oauth_server";
+    private static final String OAUTH_SECRET_ENDPOINT_CONFIG = "oauth_secret";
+    private static final String OAUTH_REDIRECT_ENDPOINT_CONFIG = "oauth_redirect";
+    private static final String OAUTH_APIKEY_ENDPOINT_CONFIG = "oauth_apikey";
+
+    private static final String OAUTH_JWT_TEMPLATE_ENDPOINT_CONFIG = "oauth_jwt_template";
+    private static final String OAUTH_PRIVATE_KEY_ENDPOINT_CONFIG = "oauth_private_key";
+    private static final String OAUTH_KID_ENDPOINT_CONFIG = "oauth_kid";
+
+    private static final String URLENCODED_CONTENT_TYPE = "application/x-www-form-urlencoded";
+    private static final String LOCATION_HEADER = "Location";
+
+    //  json attribute names 
+    private static final String ACCESS_TOKEN_ATT = "access_token";
+    private static final String EXPIRES_IN_ATT = "expires_in";
+    private static final String WHEN_ATT = "when";
+
+    private static final String TOKEN_FILE_SUFFIX = "_token.json";
 
     // see https://www.rfc-editor.org/rfc/rfc7591.html
     enum GrantType {
@@ -62,6 +85,7 @@ public class OauthUtils {
 
     /**
      * unpack url context path parameters into a hashmap
+     *
      * @param url
      * @return hashmap
      */
@@ -82,6 +106,7 @@ public class OauthUtils {
 
     /**
      * parse an endpoint config file containing environment variable settings
+     *
      * @param endPointConfigFile
      * @return HashMap of config file attributes
      * @throws IOException
@@ -107,15 +132,42 @@ public class OauthUtils {
     }
 
     /**
-     * return an oauth2 access token for us with apim endpoints
-     * cuurently only supports sandbox
+     * return an oauth2 access token using the client credentials grant type
+     *
+     * @param endPointConfigFile
+     * @return oauth access token
+     * @throws URISyntaxException
+     * @throws IOException
+     * @throws InterruptedException
+     * @throws Exception
+     */
+    public static String oauthGetAccessToken_ClientCredentials(String endPointConfigFile) throws URISyntaxException, IOException, InterruptedException, Exception {
+        return oauthGetAccessToken(endPointConfigFile, GrantType.client_credentials);
+    }
+
+    /**
+     * return an oauth2 access token using the authorization code grant type
+     *
      * @param endPointConfigFile String
      * @return oauth access token
      * @throws URISyntaxException
      * @throws IOException
      * @throws InterruptedException
      */
-    public static String oauthGetAccessToken(String endPointConfigFile) throws URISyntaxException, IOException, InterruptedException, Exception {
+    public static String oauthGetAccessToken_AuthorizationCode(String endPointConfigFile) throws URISyntaxException, IOException, InterruptedException, Exception {
+        return oauthGetAccessToken(endPointConfigFile, GrantType.authorization_code);
+    }
+
+    /**
+     * return an oauth2 access token using the authorization code grant type
+     *
+     * @param endPointConfigFile String
+     * @return oauth access token
+     * @throws URISyntaxException
+     * @throws IOException
+     * @throws InterruptedException
+     */
+    private static String oauthGetAccessToken(String endPointConfigFile, GrantType grantType) throws URISyntaxException, IOException, InterruptedException, Exception {
 
         // these files are typically appened with .sh so remove that if present to derive the endpoint name
         String endPointName = endPointConfigFile.replaceFirst("\\.sh", "");
@@ -123,23 +175,18 @@ public class OauthUtils {
 
         for (String key : new String[]{OAUTH_APIKEY_ENDPOINT_CONFIG, OAUTH_REDIRECT_ENDPOINT_CONFIG, OAUTH_SECRET_ENDPOINT_CONFIG, OAUTH_SERVER_ENDPOINT_CONFIG}) {
             if (endpointConfig.get(key) == null) {
-                throw new IllegalArgumentException("No value supplied for endpoint config item " + key);
+                throw new IllegalArgumentException("No value supplied for endpoint config item: " + key);
             }
         }
 
-        String aPIKey = endpointConfig.get(OAUTH_APIKEY_ENDPOINT_CONFIG);
-        String redirect = endpointConfig.get(OAUTH_REDIRECT_ENDPOINT_CONFIG);
-        redirect = URLEncoder.encode(redirect, java.nio.charset.StandardCharsets.UTF_8.toString());
-        String secret = endpointConfig.get(OAUTH_SECRET_ENDPOINT_CONFIG);
-        String ep = endpointConfig.get(OAUTH_SERVER_ENDPOINT_CONFIG);
-
-        Gson gson = new GsonBuilder().setPrettyPrinting().create();
-        HttpClient client = HttpClient.newHttpClient();
-
+        gson = new GsonBuilder().setPrettyPrinting().create();
+        client = HttpClient.newHttpClient();
+        
+        LinkedTreeMap treeMap = null;
         File tokenFile = new File(endPointName + TOKEN_FILE_SUFFIX);
         if (tokenFile.exists()) {
             String json = Files.readString(Paths.get(tokenFile.getAbsolutePath()));
-            LinkedTreeMap treeMap = (LinkedTreeMap) gson.fromJson(json, Object.class);
+            treeMap = (LinkedTreeMap) gson.fromJson(json, Object.class);
 
             Long when = Long.parseLong((String) treeMap.get(WHEN_ATT));
             Long expires_in = Long.parseLong((String) treeMap.get(EXPIRES_IN_ATT));
@@ -147,12 +194,62 @@ public class OauthUtils {
 
             // token not expired so re use it
             if ((Instant.now().getEpochSecond() - when) < expires_in) {
-                return "Bearer "+ access_token;
+                return "Bearer " + access_token;
             }
         }
 
         // either the token has expired or this is the first time through so do the interaction with the oauth server
+        String tokenJson = null;
+        switch (grantType) {
+            case authorization_code:
+                tokenJson = doAuthorizationCode(endpointConfig);
+                break;
+            case client_credentials:
+                tokenJson = doClientCredentials(endpointConfig);
+                break;
+            default:
+                throw new IllegalArgumentException("Unhandled oath2 grant type "+grantType);
+        }
+
+        // parse the returned json
+        treeMap = (LinkedTreeMap) gson.fromJson(tokenJson, Object.class);
+        String accessToken = (String) treeMap.get(ACCESS_TOKEN_ATT);
+        if (accessToken == null) {
+            throw new IllegalArgumentException("Protocol error missing access token element in json token response");
+        }
+
+        if (DEBUG) {
+            Iterator iter = treeMap.keySet().iterator();
+            while (iter.hasNext()) {
+                String key1 = (String) iter.next();
+                System.out.println(key1 + "=" + treeMap.get(key1));
+            }
+        }
+
+        // when did we get this response?
+        Long when = Instant.now().getEpochSecond();
+        // add to the json object prior to serialsing to the json file so we can calculate if the token has expired next time we open the file
+        try ( FileWriter fw = new FileWriter(tokenFile.getAbsolutePath())) {
+            treeMap.put(WHEN_ATT, when.toString());
+            fw.write(gson.toJson(treeMap));
+        }
+
+        return "Bearer " + accessToken;
+    }
+
+    /**
+     *
+     * @param endpointConfig
+     * @throws Exception
+     */
+    private static String doAuthorizationCode(HashMap<String, String> endpointConfig) throws Exception {
         String state = UUID.randomUUID().toString();
+
+        String aPIKey = endpointConfig.get(OAUTH_APIKEY_ENDPOINT_CONFIG);
+        String redirect = endpointConfig.get(OAUTH_REDIRECT_ENDPOINT_CONFIG);
+        redirect = URLEncoder.encode(redirect, java.nio.charset.StandardCharsets.UTF_8.toString());
+        String secret = endpointConfig.get(OAUTH_SECRET_ENDPOINT_CONFIG);
+        String ep = endpointConfig.get(OAUTH_SERVER_ENDPOINT_CONFIG);
 
         // Call 1 authorization
         HttpRequest request = HttpRequest.newBuilder()
@@ -231,47 +328,54 @@ public class OauthUtils {
         if (response.statusCode() != 200) {
             throw new Exception("Protocol error call 4 expecting 200 ok");
         }
-        String tokenJson = response.body();
-
-        // parse the returned json
-        LinkedTreeMap treeMap = (LinkedTreeMap) gson.fromJson(tokenJson, Object.class);
-        String accessToken = (String) treeMap.get(ACCESS_TOKEN_ATT);
-        if (accessToken == null) {
-            throw new Exception("Protocol error call 4 missing access token element in json token response");
-        }
-
-        if (DEBUG) {
-            Iterator iter = treeMap.keySet().iterator();
-            while (iter.hasNext()) {
-                String key1 = (String) iter.next();
-                System.out.println(key1 + "=" + treeMap.get(key1));
-            }
-        }
-
-        // when did we get this response?
-        Long when = Instant.now().getEpochSecond();
-        // add to the json object prior to serialsing to the json file so we can calculate if the token has expired next time we open the file
-        try ( FileWriter fw = new FileWriter(tokenFile.getAbsolutePath())) {
-            treeMap.put(WHEN_ATT, when.toString());
-            fw.write(gson.toJson(treeMap));
-        }
-
-        return "Bearer "+ accessToken;
+        return response.body();
     }
 
-    // environment variable names in endpoint config file
-    private static final String OAUTH_SERVER_ENDPOINT_CONFIG = "oauth_server";
-    private static final String OAUTH_SECRET_ENDPOINT_CONFIG = "oauth_secret";
-    private static final String OAUTH_REDIRECT_ENDPOINT_CONFIG = "oauth_redirect";
-    private static final String OAUTH_APIKEY_ENDPOINT_CONFIG = "oauth_apikey";
+    /**
+     * 
+     * @param endpointConfig
+     * @return
+     * @throws Exception 
+     */
+    private static String doClientCredentials(HashMap<String, String> endpointConfig) throws Exception {
+        String aPIKey = endpointConfig.get(OAUTH_APIKEY_ENDPOINT_CONFIG);
+        String ep = endpointConfig.get(OAUTH_SERVER_ENDPOINT_CONFIG);
 
-    private static final String URLENCODED_CONTENT_TYPE = "application/x-www-form-urlencoded";
-    private static final String LOCATION_HEADER = "Location";
+        for (String configItem : new String[]{OAUTH_PRIVATE_KEY_ENDPOINT_CONFIG, OAUTH_JWT_TEMPLATE_ENDPOINT_CONFIG}){
+            if (endpointConfig.get(configItem) == null) {
+                throw new IllegalArgumentException("No value supplied for endpoint config item: " + configItem);
+            }
+            File file = new File(endpointConfig.get(configItem));
+            if (!file.exists()) {
+                throw new IllegalArgumentException("File " + file.getAbsolutePath() + " referenced by config item "+ configItem + " does not exist");
+            }
+        }
+        String privateKeyFile = endpointConfig.get(OAUTH_PRIVATE_KEY_ENDPOINT_CONFIG);
+        String jwtTemplateFile = endpointConfig.get(OAUTH_JWT_TEMPLATE_ENDPOINT_CONFIG);
+        String kid = endpointConfig.get(OAUTH_KID_ENDPOINT_CONFIG);
+        if (kid == null){
+            throw new IllegalArgumentException("No value supplied for endpoint config item: " + OAUTH_KID_ENDPOINT_CONFIG);
+        }
+        
+        AuthorisationGenerator authorisationGenerator = new AuthorisationGenerator(jwtTemplateFile);
+        String jwt = authorisationGenerator.getAuthorisationString(kid,
+                "https://" + ep + "/oath2/token,__API_KEY__|" + aPIKey,
+                privateKeyFile,
+                true,
+                JWT_Algorithm.RS512,
+                1);
 
-    //  json attribute names 
-    private static final String ACCESS_TOKEN_ATT = "access_token";
-    private static final String EXPIRES_IN_ATT = "expires_in";
-    private static final String WHEN_ATT = "when";
-
-    private static final String TOKEN_FILE_SUFFIX = "_token.json";
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://" + ep + "/oauth2/token"))
+                .setHeader("Content-type", URLENCODED_CONTENT_TYPE)
+                .POST(HttpRequest.BodyPublishers.ofString("grant_type=" + GrantType.client_credentials.name()
+                        + "&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                        + "&client_assertion=" + jwt))
+                .build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new Exception("Protocol error client credentials call expecting 200 ok");
+        }
+        return response.body();
+    }
 }
