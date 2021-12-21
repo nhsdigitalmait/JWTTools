@@ -38,7 +38,7 @@ import java.net.URLEncoder;
 import uk.nhs.digital.mait.jwttools.AuthorisationGenerator.JWT_Algorithm;
 
 /**
- *
+ * Utilities to support authentication using oauth2
  * @author simonfarrow
  */
 public class OauthUtils {
@@ -82,14 +82,17 @@ public class OauthUtils {
         code,
         token
     }
+    
+    // not to be instantiated
+    private OauthUtils() {};
 
     /**
      * unpack url context path parameters into a hashmap
      *
      * @param url
-     * @return hashmap
+     * @return hashmap of kay  value pairs
      */
-    private static HashMap parseParameters(String url) {
+    private static HashMap parseCPParameters(String url) {
         String line = url.replaceFirst("^.*\\?", "");
         String[] parameters = line.split("\\&");
         HashMap<String, String> hm = new HashMap();
@@ -106,9 +109,10 @@ public class OauthUtils {
 
     /**
      * parse an endpoint config file containing environment variable settings
-     *
+     * These are the autotest sh ell script endpoint config files which
+     * set environment variables
      * @param endPointConfigFile
-     * @return HashMap of config file attributes
+     * @return HashMap of config file attribute value pairs
      * @throws IOException
      */
     private static HashMap<String, String> parseEndpointConfig(String endPointConfigFile) throws IOException {
@@ -133,7 +137,7 @@ public class OauthUtils {
 
     /**
      * return an oauth2 access token using the client credentials grant type
-     *
+     * public overload method
      * @param endPointConfigFile
      * @return oauth access token
      * @throws URISyntaxException
@@ -147,7 +151,7 @@ public class OauthUtils {
 
     /**
      * return an oauth2 access token using the authorization code grant type
-     *
+     * public overload method
      * @param endPointConfigFile String
      * @return oauth access token
      * @throws URISyntaxException
@@ -159,8 +163,8 @@ public class OauthUtils {
     }
 
     /**
-     * return an oauth2 access token using the authorization code grant type
-     *
+     * return an oauth2 access token
+     * This method is private with two public overloads named for supported oauth2 grant types
      * @param endPointConfigFile String
      * @return oauth access token
      * @throws URISyntaxException
@@ -173,11 +177,8 @@ public class OauthUtils {
         String endPointName = endPointConfigFile.replaceFirst("\\.sh", "");
         HashMap<String, String> endpointConfig = parseEndpointConfig(endPointConfigFile);
 
-        for (String key : new String[]{OAUTH_APIKEY_ENDPOINT_CONFIG, OAUTH_REDIRECT_ENDPOINT_CONFIG, OAUTH_SECRET_ENDPOINT_CONFIG, OAUTH_SERVER_ENDPOINT_CONFIG}) {
-            if (endpointConfig.get(key) == null) {
-                throw new IllegalArgumentException("No value supplied for endpoint config item: " + key);
-            }
-        }
+        // check for common settings
+        checkSettings(endpointConfig, new String[]{OAUTH_APIKEY_ENDPOINT_CONFIG, OAUTH_SERVER_ENDPOINT_CONFIG});
 
         gson = new GsonBuilder().setPrettyPrinting().create();
         client = HttpClient.newHttpClient();
@@ -192,7 +193,7 @@ public class OauthUtils {
             Long expires_in = Long.parseLong((String) treeMap.get(EXPIRES_IN_ATT));
             String access_token = (String) treeMap.get(ACCESS_TOKEN_ATT);
 
-            // token not expired so re use it
+            // token has not expired so re use it
             if ((Instant.now().getEpochSecond() - when) < expires_in) {
                 return "Bearer " + access_token;
             }
@@ -238,18 +239,26 @@ public class OauthUtils {
     }
 
     /**
-     *
+     * handles the authorization code grant type
+     * return an oauth2 access token 
+     * This interacts with a webpage performing the authentication
      * @param endpointConfig
+     * @return oauth2 access token
      * @throws Exception
      */
     private static String doAuthorizationCode(HashMap<String, String> endpointConfig) throws Exception {
         String state = UUID.randomUUID().toString();
 
+        // we know these exist
         String aPIKey = endpointConfig.get(OAUTH_APIKEY_ENDPOINT_CONFIG);
+        String ep = endpointConfig.get(OAUTH_SERVER_ENDPOINT_CONFIG);
+        
+        // only required for this grant type
+        checkSettings(endpointConfig, new String[]{OAUTH_REDIRECT_ENDPOINT_CONFIG, OAUTH_SECRET_ENDPOINT_CONFIG});
+
         String redirect = endpointConfig.get(OAUTH_REDIRECT_ENDPOINT_CONFIG);
         redirect = URLEncoder.encode(redirect, java.nio.charset.StandardCharsets.UTF_8.toString());
         String secret = endpointConfig.get(OAUTH_SECRET_ENDPOINT_CONFIG);
-        String ep = endpointConfig.get(OAUTH_SERVER_ENDPOINT_CONFIG);
 
         // Call 1 authorization
         HttpRequest request = HttpRequest.newBuilder()
@@ -270,7 +279,7 @@ public class OauthUtils {
             throw new Exception("Protocol error call 1 missing location header");
         }
 
-        HashMap parameters = parseParameters(location);
+        HashMap parameters = parseCPParameters(location);
         String state1 = (String) parameters.get("state");
         if (state1 == null) {
             throw new Exception("Protocol error call 1 missing state parameter in location header");
@@ -308,7 +317,7 @@ public class OauthUtils {
             throw new Exception("Protocol error call 3 missing location header");
         }
 
-        parameters = parseParameters(location);
+        parameters = parseCPParameters(location);
         String code = (String) parameters.get("code");
         if (code == null) {
             throw new Exception("Protocol error call 3 missing code parameter in location header");
@@ -332,19 +341,21 @@ public class OauthUtils {
     }
 
     /**
-     * 
+     * handles the client credentials grant type
+     * creates a RS512 signed JWT and receives an access token in return
      * @param endpointConfig
-     * @return
+     * @return oauth2 access token
      * @throws Exception 
      */
     private static String doClientCredentials(HashMap<String, String> endpointConfig) throws Exception {
+        // we know these exist
         String aPIKey = endpointConfig.get(OAUTH_APIKEY_ENDPOINT_CONFIG);
         String ep = endpointConfig.get(OAUTH_SERVER_ENDPOINT_CONFIG);
 
-        for (String configItem : new String[]{OAUTH_PRIVATE_KEY_ENDPOINT_CONFIG, OAUTH_JWT_TEMPLATE_ENDPOINT_CONFIG}){
-            if (endpointConfig.get(configItem) == null) {
-                throw new IllegalArgumentException("No value supplied for endpoint config item: " + configItem);
-            }
+        // only required for this grant type
+        String[] requiredSettings = new String[]{OAUTH_PRIVATE_KEY_ENDPOINT_CONFIG, OAUTH_JWT_TEMPLATE_ENDPOINT_CONFIG};
+        checkSettings(endpointConfig, requiredSettings);
+        for (String configItem : requiredSettings){
             File file = new File(endpointConfig.get(configItem));
             if (!file.exists()) {
                 throw new IllegalArgumentException("File " + file.getAbsolutePath() + " referenced by config item "+ configItem + " does not exist");
@@ -354,7 +365,7 @@ public class OauthUtils {
         String jwtTemplateFile = endpointConfig.get(OAUTH_JWT_TEMPLATE_ENDPOINT_CONFIG);
         String kid = endpointConfig.get(OAUTH_KID_ENDPOINT_CONFIG);
         if (kid == null){
-            throw new IllegalArgumentException("No value supplied for endpoint config item: " + OAUTH_KID_ENDPOINT_CONFIG);
+            throw new IllegalArgumentException("No value supplied for required endpoint config item: " + OAUTH_KID_ENDPOINT_CONFIG);
         }
         
         AuthorisationGenerator authorisationGenerator = new AuthorisationGenerator(jwtTemplateFile);
@@ -378,4 +389,17 @@ public class OauthUtils {
         }
         return response.body();
     }
+    
+    /**
+     * if a required setting is not present in the config file throw an exception
+     * @param endpointConfig
+     * @param requiredSettings 
+     */
+    private static void checkSettings(HashMap<String,String> endpointConfig, String[] requiredSettings) {      
+        for (String setting : requiredSettings) {
+            if (endpointConfig.get(setting) == null) {
+                throw new IllegalArgumentException("No value supplied for required endpoint config item: " + setting);
+            }
+        }
+   }
 }
