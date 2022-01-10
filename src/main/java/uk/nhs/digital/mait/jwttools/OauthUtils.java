@@ -158,6 +158,7 @@ public class OauthUtils {
      * @throws IOException
      * @throws InterruptedException
      */
+    
     public static String oauthGetAccessToken_AuthorizationCode(String endPointConfigFile) throws URISyntaxException, IOException, InterruptedException, Exception {
         return oauthGetAccessToken(endPointConfigFile, GrantType.authorization_code);
     }
@@ -370,7 +371,7 @@ public class OauthUtils {
         
         AuthorisationGenerator authorisationGenerator = new AuthorisationGenerator(jwtTemplateFile);
         String jwt = authorisationGenerator.getAuthorisationString(kid,
-                "https://" + ep + "/oath2/token,__API_KEY__|" + aPIKey,
+                "https://" + ep + "/oauth2/token,__API_KEY__|" + aPIKey,
                 privateKeyFile,
                 true,
                 JWT_Algorithm.RS512,
@@ -385,7 +386,7 @@ public class OauthUtils {
                 .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
-            throw new Exception("Protocol error client credentials call expecting 200 ok");
+           throw new Exception("Protocol error client credentials call expecting 200 ok received "+response.statusCode() +" " + response.body());
         }
         return response.body();
     }

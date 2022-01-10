@@ -25,6 +25,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import static org.junit.Assert.*;
+import static uk.nhs.digital.mait.jwttools.AuthorisationGenerator.verifyRS512Signature;
 
 /**
  *
@@ -410,7 +411,20 @@ public class AuthorisationGeneratorTest {
         String parts[] = result.split("\\.");
         assertTrue(parts.length == 3);
         assertTrue(parts[2].length() > 0);
+        
+        // RS512 
+        result = AuthorisationGenerator.getJWT(templateFile, practitionerID, nhsNumber, "src/test/resources/test.pem", useBase64URLStr, "RS512", payloadCountStr);
+        parts = result.split("\\.");
+        assertTrue(parts.length == 3);
+        assertTrue(parts[2].length() > 0);
 
+        // verify signature
+        String headerAndPayload = parts[0]+"."+parts[1];
+        String signature = parts[2];
+        
+        boolean bResult = verifyRS512Signature("src/test/resources/test.pubkey", headerAndPayload, Base64.getUrlDecoder().decode(signature));
+        assertTrue(bResult);
+        
         payloadCountStr = "2";
         expResult = 3;
         result = AuthorisationGenerator.getJWT(templateFile, practitionerID, nhsNumber, secret, useBase64URLStr, addSignatureStr, payloadCountStr);

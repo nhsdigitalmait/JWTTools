@@ -272,7 +272,9 @@ public class AuthorisationGenerator {
                 sbHeaderPlusPayload.append(getHmac(secret, sbHeaderPlusPayload.toString()));
                 break;
             case RS512:
-                sbHeaderPlusPayload.append(getRS512Signature(secret, sbHeaderPlusPayload.toString()));
+                // NB dont include the final period in the signature
+                // JWT.com will show the sig as good but it isn't!
+                sbHeaderPlusPayload.append(getRS512Signature(secret, sbHeaderPlusPayload.toString().replaceFirst("\\.$", "")));
                 break;
             default:
                 throw new IllegalArgumentException("Invalid algorithm");
@@ -386,7 +388,7 @@ public class AuthorisationGenerator {
      * @param sigBytes
      * @return boolean indicating whether data is signed correctly
      */
-    public boolean verifyRS512Signature(String key, String data, byte[] sigBytes) throws Exception {
+    public static boolean verifyRS512Signature(String key, String data, byte[] sigBytes) throws Exception {
         String[] tokens = key.split("\\|");
         String path = null;
         String password = "password";
@@ -518,8 +520,8 @@ public class AuthorisationGenerator {
                 PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(encoded);
                 privateKey = (RSAPrivateKey) keyFactory.generatePrivate(keySpec);
             } 
-
-            Signature signature = Signature.getInstance(RSA512_ALGORITHM);
+            
+            Signature signature = Signature.getInstance(RSA512_ALGORITHM, "SunRsaSign");
             signature.initSign(privateKey);
             signature.update(data.getBytes());
             byte[] sigBytes = signature.sign();
@@ -556,7 +558,7 @@ public class AuthorisationGenerator {
         return sb.toString();
     }
 
-    private String readFile2String(String filename) throws IOException {
+    private static String readFile2String(String filename) throws IOException {
         Path path = Paths.get(filename);
         return Files.readString(path);
     }

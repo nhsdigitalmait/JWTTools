@@ -86,8 +86,9 @@ public class OauthUtilsTest {
 
     /**
      * Test of oauthGetAccessToken_ClientCredentials method, of class OauthUtils.
+     * we'll get a 403 here since the test data doesn't contain a registered public key 
      */
-    @Test
+    @Test(expected=Exception.class)
     public void testOauthGetAccessToken_ClientCredentials() throws Exception {
         System.out.println("oauthGetAccessToken_ClientCredentials");
         String endPointConfigFile = "src/test/resources/NHS0001.sh";
