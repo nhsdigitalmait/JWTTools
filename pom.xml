@@ -58,6 +58,20 @@
                     </gitDescribe>
                 </configuration>
             </plugin>
+             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.0.0-M4</version>
+                <configuration>
+                    <!-- This  (Setting forkCount to 1) is critical otherwise all the tests run in a single jvm
+                   This plays havoc due to singletons like configurator not being reset between test classes
+                   see http://maven.apache.org/surefire/maven-surefire-plugin/examples/fork-options-and-parallel-execution.html
+                    -->
+                    <forkCount>1</forkCount>
+                    <reuseForks>false</reuseForks>
+                    <skipTests>true</skipTests>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
     <dependencies>
